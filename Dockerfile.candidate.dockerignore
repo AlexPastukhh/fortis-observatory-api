@@ -1,0 +1,7 @@
+# Candidate Dockerfile-specific ignore rules. Keep test credentials and files out.
+**
+!gateway.py
+!provision.py
+!store.py
+!repo_messages.py
+!repo_pending.py
