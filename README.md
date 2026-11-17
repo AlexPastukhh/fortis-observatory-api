@@ -53,8 +53,11 @@ Gateway task/PR/CI/owner merge. Live acceptance and rollback are separate.
   separately scoped read-only operations, not full API write capability.
 - New synthetic tests cover pinned CA/SAN/SNI, plaintext rejection, Host
   guards, scopes, receipts, idempotency, certificate/key permissions and
-  missing TLS start arguments. They require OpenSSL to generate **test-only**
-  credentials in temporary directories.
+  missing TLS start arguments. CI generates **test-only** TLS fixtures with
+  OpenSSL on the Ubuntu runner, mounts them read-only into the isolated
+  Python Docker test container, and requires all 57 tests to run (no skips).
+  OpenSSL is **not** required inside the pinned Python runtime image; no
+  certificate or private key is committed or baked into the image.
 - No production privileges, credentials, networks, volume mounts, port
   publishing, Gateway Apply or HTTP/18756 have been changed. R1 full design,
   independent restore and owner cutover remain separate release gates.

@@ -1,7 +1,9 @@
 """Offline direct-TLS characterization of OWNAPI-GW-01 source candidate.
 
 Synthetic TLS, Bearer and archive only; localhost ephemeral socket; no Docker,
-production network, credentials or volumes. Requires OpenSSL test executable.
+production network, credentials or volumes. TLS fixtures come from ephemeral
+CI-runner generation (no openssl binary needed in the pinned Python image);
+local runs may generate the same synthetic certificate with OpenSSL.
 """
 import hashlib
 import http.client
@@ -30,8 +32,7 @@ class LoopbackHTTPS(http.client.HTTPSConnection):
             raise
 
 
-@unittest.skipUnless(os.name == 'posix' and shutil.which('openssl'),
-                     'POSIX and synthetic openssl test certificate required')
+@unittest.skipUnless(os.name == 'posix', 'POSIX required')
 class HTTPSOnlyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -71,11 +72,28 @@ class HTTPSOnlyTests(unittest.TestCase):
                                             self.receipts,clients)
         self.cert = root/'cert.pem'
         self.key = root/'key.pem'
-        subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes',
-                        '-days','1','-subj','/CN=fortis-observatory-api',
-                        '-addext','subjectAltName=DNS:fortis-observatory-api',
-                        '-out',str(self.cert),'-keyout',str(self.key)],
-                       check=True, stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        fixture_cert = os.environ.get('OWNAPI_TEST_TLS_CERT')
+        fixture_key = os.environ.get('OWNAPI_TEST_TLS_KEY')
+        if bool(fixture_cert) != bool(fixture_key):
+            self.fail('synthetic TLS fixture must provide both cert and key')
+        if fixture_cert:
+            # CI runner generated these keys outside Git; the bind mount is
+            # read-only and the private key never enters the source/image.
+            for source, target in ((fixture_cert, self.cert),
+                                   (fixture_key, self.key)):
+                source = Path(source)
+                if not source.is_file() or source.is_symlink():
+                    self.fail('synthetic TLS fixture must be a regular file')
+                shutil.copyfile(source, target)
+        else:
+            if not shutil.which('openssl'):
+                self.fail('synthetic TLS fixture required when openssl absent')
+            subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes',
+                            '-days','1','-subj','/CN=fortis-observatory-api',
+                            '-addext','subjectAltName=DNS:fortis-observatory-api',
+                            '-out',str(self.cert),'-keyout',str(self.key)],
+                           check=True, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL)
         self.cert.chmod(0o644)
         self.key.chmod(0o600)
         self.server = self.api.https_server(

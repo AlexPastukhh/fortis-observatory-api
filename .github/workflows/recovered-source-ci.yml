@@ -48,12 +48,31 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # The pinned Python runtime need not contain openssl. Only the
+          # Ubuntu CI runner creates short-lived synthetic TLS fixtures.
+          # Nothing is baked into Docker, committed or printed to stdout.
+          command -v openssl >/dev/null
+          fixture_dir="$(mktemp -d /tmp/ownapi-tls.XXXXXXXX)"
+          cleanup() { sudo rm -rf -- "$fixture_dir"; }
+          trap cleanup EXIT
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -subj '/CN=fortis-observatory-api' \
+            -addext 'subjectAltName=DNS:fortis-observatory-api' \
+            -out "$fixture_dir/cert.pem" -keyout "$fixture_dir/key.pem" \
+            >/dev/null 2>&1
+          sudo chown 1000:1000 "$fixture_dir" "$fixture_dir/cert.pem" "$fixture_dir/key.pem"
+          sudo chmod 0700 "$fixture_dir"
+          sudo chmod 0644 "$fixture_dir/cert.pem"
+          sudo chmod 0600 "$fixture_dir/key.pem"
           docker run --rm \
             --network none --read-only --user 1000:1000 \
             --security-opt no-new-privileges --cap-drop ALL \
             --pids-limit 128 --memory 512m --cpus 1 \
             --tmpfs '/tmp:rw,nosuid,nodev,size=128m,uid=1000,gid=1000,mode=1777' \
             --mount "type=bind,source=$PWD/tests,target=/tests,readonly" \
+            --mount "type=bind,source=$fixture_dir,target=/test-fixtures,readonly" \
+            --env OWNAPI_TEST_TLS_CERT=/test-fixtures/cert.pem \
+            --env OWNAPI_TEST_TLS_KEY=/test-fixtures/key.pem \
             --env OWNAPI_SOURCE_DIR=/app \
             --entrypoint python3 ownapi01:ci \
             -I -B -m unittest discover -s /tests -p 'test_*.py' -v 2>&1 | tee test-output.log
