@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 EXPECTED = {
-    "gateway.py": (20663, "e97deeb13fa3f79e719bce14ce280d58f6e771921f897037b31d1819523e0713"),
+    "gateway.py": (22803, "9a1627decc3a989461b57ae9b5f7a75b93417d65f5e08fe7ca195e4d3ee5f04a"),
     "provision.py": (2110, "4a020eba83027b3ac09618c17cb13ea08923ead869b1de3f8893cd9b128716b3"),
     "store.py": (38372, "d494a44f94b92c294f60277d08f1bf6f5116781a65aa9d24f8c8f8dd5579256b"),
     "repo_messages.py": (10631, "9258d1adb8e61a613c08ab8be1ef75029321288332e089ba76cde7779222fbbe"),

@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+import ssl
 import stat
 import threading
 import time
@@ -254,7 +255,7 @@ class Gateway:
             return receipt, True
 
 
-def handler_for(gateway, hostname="fortis-observatory-api"):
+def handler_for(gateway, hostname="fortis-observatory-api", *, https_only=False):
     class Handler(BaseHTTPRequestHandler):
         server_version = "FortisGateway"
         sys_version = ""
@@ -281,7 +282,12 @@ def handler_for(gateway, hostname="fortis-observatory-api"):
             # Accept only machine-to-machine clients, never browser-origin requests.
             host = self.headers.get_all("Host", [])
             port = self.server.server_port
-            allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}", f"{hostname}:{port}"}
+            # HTTPS clients may omit the default :443 in Host. In the TLS-only
+            # configuration, refuse loopback/other-network authorities even
+            # when the Docker IP is reachable from an unintended network.
+            allowed_hosts = ({hostname, f"{hostname}:443"} if https_only else
+                             {f"127.0.0.1:{port}", f"localhost:{port}",
+                              f"{hostname}:{port}"})
             origin = self.headers.get("Origin")
             if (len(host) != 1 or host[0].lower() not in allowed_hosts or origin is not None
                     or self.headers.get("Sec-Fetch-Site")
@@ -397,6 +403,47 @@ def handler_for(gateway, hostname="fortis-observatory-api"):
     return Handler
 
 
+
+def _tls_file(path, *, private):
+    # Neither the certificate nor the private key is ever emitted in logs.
+    path = Path(path)
+    metadata = path.lstat()
+    if (path.parent.is_symlink() or path.parent.parent.is_symlink()
+            or not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+            or metadata.st_uid != os.geteuid()
+            or (stat.S_IMODE(metadata.st_mode) & (0o077 if private else 0o022))):
+        raise ValueError("tls_file_owner_or_mode_refused")
+    return path
+
+
+def https_server(gateway, bind, port, certificate, private_key,
+                 *, hostname="fortis-observatory-api"):
+    """One API process, one direct TLS listener; no plaintext fallback."""
+    if not hostname or hostname != "fortis-observatory-api":
+        raise ValueError("tls_hostname_refused")
+    certificate = _tls_file(certificate, private=False)
+    private_key = _tls_file(private_key, private=True)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.options |= ssl.OP_NO_COMPRESSION
+    context.load_cert_chain(str(certificate), str(private_key))
+
+    def check_sni(socket, server_name, active_context):
+        if server_name != hostname:
+            return ssl.ALERT_DESCRIPTION_UNRECOGNIZED_NAME
+
+    context.set_servername_callback(check_sni)
+    server = ThreadingHTTPServer(
+        (bind, port), handler_for(gateway, hostname, https_only=True))
+    server.daemon_threads = True
+    try:
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+    except BaseException:
+        server.server_close()
+        raise
+    return server
+
+
 def main():
     parser = argparse.ArgumentParser(description="Private Fortis Observatory API Gateway")
     parser.add_argument("--archive", type=Path, required=True)
@@ -404,14 +451,16 @@ def main():
     parser.add_argument("--receipts", type=Path, required=True)
     parser.add_argument("--clients", type=Path, required=True)
     parser.add_argument("--bind", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=18756)
+    parser.add_argument("--port", type=int, default=443)
+    parser.add_argument("--tls-cert", type=Path, required=True)
+    parser.add_argument("--tls-key", type=Path, required=True)
     args = parser.parse_args()
-    if not 1024 <= args.port <= 65535 or args.bind not in ("127.0.0.1", "0.0.0.0"):
-        parser.error("invalid_bind_or_port")
+    if args.port != 443 or args.bind not in ("127.0.0.1", "0.0.0.0"):
+        parser.error("invalid_https_bind_or_port")
     gateway = Gateway(args.archive, args.pending_root, args.receipts, args.clients)
-    server = ThreadingHTTPServer((args.bind, args.port), handler_for(gateway))
-    server.daemon_threads = True
-    print("FORTIS_GATEWAY_READY local_scoped_api=true staging_only=true", flush=True)
+    server = https_server(gateway, args.bind, args.port,
+                          args.tls_cert, args.tls_key)
+    print("FORTIS_OBSERVATORY_HTTPS_READY tls=true staging_only=true", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

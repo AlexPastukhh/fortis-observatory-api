@@ -9,13 +9,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 WORKDIR /app
 
-# Five byte-for-byte recovered Python files. CI must verify SOURCE-MANIFEST first.
+# Five original source modules; gateway.py now has reviewed OWNAPI-GW-01
+# HTTPS-only candidate edits. CI pins current candidate hashes in tests.
 COPY --chown=1000:1000 gateway.py provision.py store.py repo_messages.py repo_pending.py ./
 
 USER 1000:1000
-EXPOSE 18756
+EXPOSE 443
 ENTRYPOINT ["python3", "/app/gateway.py"]
 
 # Deliberately no CMD. In an authorized isolated deployment, supply all four
-# required paths: --archive, --pending-root, --receipts, --clients, plus bind/port.
+# required paths: --archive, --pending-root, --receipts, --clients,
+# --tls-cert and --tls-key (owner-mounted), plus reviewed --bind/--port 443.
+# No host published port in the approved Docker-only target.
 # Never copy clients.json or runtime tokens into this image.
